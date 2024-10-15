@@ -1,0 +1,69 @@
+	static void doProjectUpdate(IProgressMonitor monitor, final IProject project) throws CoreException {
+		String[] projectName = new String[] { project.getName() };
+		IFile file = project.getFile(ManagedBuildManager.SETTINGS_FILE_NAME);
+		File settingsFile = file.getLocation().toFile();
+		if (!settingsFile.exists()) {
+			monitor.done();
+			return;
+		}
+
+		// Backup the file
+		monitor.beginTask(ConverterMessages.getFormattedString("UpdateManagedProject20.0", projectName), 1); //$NON-NLS-1$
+		IManagedBuildInfo info = ManagedBuildManager.getBuildInfo(project);
+		UpdateManagedProjectManager.backupFile(file, "_20backup", monitor, project); //$NON-NLS-1$
+
+		try {
+			// Load the old build file
+			InputStream stream = new FileInputStream(settingsFile);
+			DocumentBuilder parser = DocumentBuilderFactory.newInstance().newDocumentBuilder();
+			Document document = parser.parse(stream);
+
+			// Clone the target based on the proper target definition
+			NodeList targetNodes = document.getElementsByTagName(ITarget.TARGET_ELEMENT_NAME);
+			// This is a guess, but typically the project has 1 target, 2 configs, and 6 tool defs
+			int listSize = targetNodes.getLength();
+			monitor.beginTask(ConverterMessages.getFormattedString("UpdateManagedProject20.1", projectName), //$NON-NLS-1$
+					listSize * 9);
+			for (int targIndex = 0; targIndex < listSize; ++targIndex) {
+				Element oldTarget = (Element) targetNodes.item(targIndex);
+				String oldTargetId = oldTarget.getAttribute(ITarget.ID);
+				IManagedProject newProject = convertTarget(project, oldTarget, monitor);
+
+				// Remove the old target
+				if (newProject != null) {
+					info.removeTarget(oldTargetId);
+					monitor.worked(9);
+				}
+			}
+			// Upgrade the version
+			((ManagedBuildInfo) info).setVersion("2.1.0"); //$NON-NLS-1$
+			info.setValid(true);
+		} catch (CoreException e) {
+			throw e;
+		} catch (Exception e) {
+			throw new CoreException(
+					new Status(IStatus.ERROR, ManagedBuilderCorePlugin.getUniqueIdentifier(), -1, e.getMessage(), e));
+		} finally {
+			// If the tree is locked spawn a job to this.
+			IWorkspace workspace = project.getWorkspace();
+			//			boolean treeLock = workspace.isTreeLocked();
+			ISchedulingRule rule = workspace.getRuleFactory().createRule(project);
+			//			if (treeLock) {
+			//since the java synchronized mechanism is now used for the build info loadding,
+			//initiate the job in all cases
+			WorkspaceJob job = new WorkspaceJob(ConverterMessages.getResourceString("UpdateManagedProject.notice")) { //$NON-NLS-1$
+				@Override
+				public IStatus runInWorkspace(IProgressMonitor monitor) throws CoreException {
+					ManagedBuildManager.saveBuildInfoLegacy(project, false);
+					return Status.OK_STATUS;
+				}
+			};
+			job.setRule(rule);
+			job.schedule();
+			//			} else {
+			//				ManagedBuildManager.saveBuildInfo(project, false);
+			//			}
+			monitor.done();
+		}
+
+	}

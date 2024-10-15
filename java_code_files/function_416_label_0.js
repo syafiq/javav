@@ -1,0 +1,3 @@
+    int getMaxInboundMessageBodySize() {
+        return maxInboundMessageBodySize;
+    }
